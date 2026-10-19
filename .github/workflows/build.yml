@@ -13,7 +13,7 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "17 4 * * *"
+    - cron: "0 0 * * 5"
   push:
     branches: [main]
     paths:
@@ -127,7 +127,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [amd64, arm64, armv7, armv6, 386, armv5, s390x]
+        platform: [amd64]
     steps:
       - name: Checkout fork repo
         uses: actions/checkout@v7
