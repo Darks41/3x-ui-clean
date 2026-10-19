@@ -1,0 +1,366 @@
+name: build-adfree
+
+# Rebuilds the ad-free 3x-ui binary from the latest upstream release.
+# Guard: the upstream ad implementation must still match baseline.json.
+# If upstream changed or removed the ad code, the build is skipped and the
+# reason is reported in the job log / step summary.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if a release for this upstream tag already exists"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 4 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - "baseline.json"
+      - ".github/workflows/build.yml"
+
+concurrency:
+  group: adfree-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  UPSTREAM_REPO: MHSanaei/3x-ui
+  FORK_REPO: ${{ github.repository }}
+
+jobs:
+  guard:
+    name: Check upstream ad code
+    runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ steps.gate.outputs.proceed }}
+      tag: ${{ steps.gate.outputs.tag }}
+      version: ${{ steps.gate.outputs.version }}
+      reason: ${{ steps.gate.outputs.reason }}
+    steps:
+      - name: Checkout fork repo
+        uses: actions/checkout@v7
+
+      - name: Resolve, verify and gate upstream release
+        id: gate
+        run: |
+          set -euo pipefail
+          FORCE="${{ github.event.inputs.force || 'false' }}"
+
+          skip() {
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "version=${VER:-unknown}" >> "$GITHUB_OUTPUT"
+            echo "reason=$1" >> "$GITHUB_OUTPUT"
+            echo "::notice title=跳过编译::$1"
+            {
+              echo "### 跳过编译"
+              echo ""
+              echo "**上游版本：** ${TAG}"
+              echo ""
+              echo "**原因：** $1"
+              echo ""
+              echo "本次未编译、未发布。人工复核后更新 \`baseline.json\` 与 \`scripts/patch.py\` 即可恢复。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+
+          TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+            --retry 5 --retry-delay 3 --connect-timeout 15 \
+            "https://github.com/${UPSTREAM_REPO}/releases/latest" 2>/dev/null \
+            | sed -n 's#.*/tag/##p' || true)
+          if [[ -z "${TAG}" ]]; then
+            TAG=$(curl -fsSL --retry 5 --retry-delay 3 --connect-timeout 15 \
+              "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')
+          fi
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Could not resolve a stable upstream release tag (got '${TAG}')"
+            exit 1
+          fi
+          echo "Resolved upstream release: ${TAG}"
+
+          if gh release view "${TAG}" --repo "${FORK_REPO}" >/dev/null 2>&1; then
+            if [[ "${FORCE}" != "true" ]]; then
+              skip "Release ${TAG} 已存在；如需重建请手动运行 workflow 并勾选 force"
+            fi
+          fi
+
+          git clone --depth 1 --branch "${TAG}" "https://github.com/${UPSTREAM_REPO}.git" upstream
+          VER=$(tr -d '[:space:]' < upstream/internal/config/version)
+          if [[ "v${VER}" != "${TAG}" ]]; then
+            skip "上游版本文件 ${VER} 与 tag ${TAG} 不一致，跳过以避免发布错版本"
+          fi
+
+          set +e
+          python3 scripts/patch.py check \
+            --src upstream \
+            --baseline baseline.json \
+            --report check-report.json >/dev/null
+          CODE=$?
+          set -e
+          if [[ ${CODE} -eq 3 ]]; then
+            REASON=$(python3 -c 'import json; print(json.load(open("check-report.json"))["reason"])')
+            skip "${REASON}"
+          elif [[ ${CODE} -ne 0 ]]; then
+            echo "::error::patch check failed with exit code ${CODE}"
+            cat check-report.json || true
+            exit 1
+          fi
+
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "reason=upstream ad code matches baseline" >> "$GITHUB_OUTPUT"
+          echo "::notice::上游广告代码与基线一致，开始编译 ${TAG}"
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: guard
+    if: needs.guard.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [amd64, arm64, armv7, armv6, 386, armv5, s390x]
+    steps:
+      - name: Checkout fork repo
+        uses: actions/checkout@v7
+        with:
+          path: fork
+
+      - name: Clone upstream release source
+        run: |
+          git clone --depth 1 --branch "${{ needs.guard.outputs.tag }}" \
+            "https://github.com/${UPSTREAM_REPO}.git" upstream
+
+      - name: Apply ad-removal patch
+        run: |
+          python3 fork/scripts/patch.py apply \
+            --src upstream \
+            --fork "${FORK_REPO}" \
+            --baseline fork/baseline.json
+          python3 fork/scripts/patch.py scripts \
+            --src upstream \
+            --dest upstream \
+            --fork "${FORK_REPO}"
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: upstream/go.mod
+          check-latest: true
+          cache-dependency-path: upstream/go.sum
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: upstream/frontend/package-lock.json
+
+      - name: Build frontend bundle
+        working-directory: upstream/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build 3X-UI
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          CURL_RETRY="--retry 5 --retry-all-errors --retry-delay 3"
+          fetch() { wget -q --tries=5 --waitretry=10 --retry-on-http-error=429,500,502,503 "$@"; }
+          export CGO_ENABLED=1
+          export GOOS=linux
+          export GOARCH=${{ matrix.platform }}
+          case "${{ matrix.platform }}" in
+            amd64) BOOTLIN_ARCH="x86-64" ;;
+            arm64) BOOTLIN_ARCH="aarch64" ;;
+            armv7) BOOTLIN_ARCH="armv7-eabihf"; export GOARCH=arm GOARM=7 ;;
+            armv6) BOOTLIN_ARCH="armv6-eabihf"; export GOARCH=arm GOARM=6 ;;
+            armv5) BOOTLIN_ARCH="armv5-eabi"; export GOARCH=arm GOARM=5 ;;
+            386) BOOTLIN_ARCH="x86-i686" ;;
+            s390x) BOOTLIN_ARCH="s390x-z13" ;;
+          esac
+          TARBALL_BASE="https://toolchains.bootlin.com/downloads/releases/toolchains/${BOOTLIN_ARCH}/tarballs/"
+          TARBALL_URL=$(curl -fsSL ${CURL_RETRY} "${TARBALL_BASE}" | grep -oE "${BOOTLIN_ARCH}--musl--stable-[^\"]+\\.tar\\.xz" | sort -r | head -n1)
+          [ -z "${TARBALL_URL}" ] && { echo "Failed to locate Bootlin musl toolchain for ${BOOTLIN_ARCH}" >&2; exit 1; }
+          cd /tmp
+          curl -fL -sS ${CURL_RETRY} -o "$(basename "${TARBALL_URL}")" "${TARBALL_BASE}/${TARBALL_URL}"
+          tar -xf "$(basename "${TARBALL_URL}")"
+          TOOLCHAIN_DIR=$(find . -maxdepth 1 -type d -name "${BOOTLIN_ARCH}--musl--stable-*" | head -n1)
+          export PATH="$(realpath "${TOOLCHAIN_DIR}")/bin:${PATH}"
+          export CC=$(realpath "$(find "${TOOLCHAIN_DIR}/bin" -name '*-gcc.br_real' -type f -executable | head -n1)")
+          [ -z "${CC}" ] && { echo "No gcc.br_real found in ${TOOLCHAIN_DIR}/bin" >&2; exit 1; }
+          cd -
+          LDFLAGS="-w -s -linkmode external -extldflags '-static'"
+          go build -buildvcs=true -ldflags "${LDFLAGS}" -o xui-release -v .
+          file xui-release
+          ldd xui-release || echo "Static binary confirmed"
+
+          mkdir x-ui
+          cp xui-release x-ui/
+          cp x-ui.service.debian x-ui/
+          cp x-ui.service.arch x-ui/
+          cp x-ui.service.rhel x-ui/
+          cp x-ui.sh x-ui/
+          mv x-ui/xui-release x-ui/x-ui
+          mkdir x-ui/bin
+          cd x-ui/bin
+
+          Xray_URL="https://github.com/XTLS/Xray-core/releases/download/v26.10.10/"
+          if [ "${{ matrix.platform }}" == "amd64" ]; then
+            fetch ${Xray_URL}Xray-linux-64.zip; unzip -q Xray-linux-64.zip; rm -f Xray-linux-64.zip
+          elif [ "${{ matrix.platform }}" == "arm64" ]; then
+            fetch ${Xray_URL}Xray-linux-arm64-v8a.zip; unzip -q Xray-linux-arm64-v8a.zip; rm -f Xray-linux-arm64-v8a.zip
+          elif [ "${{ matrix.platform }}" == "armv7" ]; then
+            fetch ${Xray_URL}Xray-linux-arm32-v7a.zip; unzip -q Xray-linux-arm32-v7a.zip; rm -f Xray-linux-arm32-v7a.zip
+          elif [ "${{ matrix.platform }}" == "armv6" ]; then
+            fetch ${Xray_URL}Xray-linux-arm32-v6.zip; unzip -q Xray-linux-arm32-v6.zip; rm -f Xray-linux-arm32-v6.zip
+          elif [ "${{ matrix.platform }}" == "386" ]; then
+            fetch ${Xray_URL}Xray-linux-32.zip; unzip -q Xray-linux-32.zip; rm -f Xray-linux-32.zip
+          elif [ "${{ matrix.platform }}" == "armv5" ]; then
+            fetch ${Xray_URL}Xray-linux-arm32-v5.zip; unzip -q Xray-linux-arm32-v5.zip; rm -f Xray-linux-arm32-v5.zip
+          elif [ "${{ matrix.platform }}" == "s390x" ]; then
+            fetch ${Xray_URL}Xray-linux-s390x.zip; unzip -q Xray-linux-s390x.zip; rm -f Xray-linux-s390x.zip
+          fi
+          rm -f geoip.dat geosite.dat
+          fetch https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+          fetch https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
+          fetch -O geoip_IR.dat https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geoip.dat
+          fetch -O geosite_IR.dat https://github.com/chocolate4u/Iran-v2ray-rules/releases/latest/download/geosite.dat
+          fetch -O geoip_RU.dat https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat
+          fetch -O geosite_RU.dat https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat
+          mv xray xray-linux-${{ matrix.platform }}
+          case "${{ matrix.platform }}" in
+            amd64|arm64|armv7|armv6|386)
+              MTG_MULTI_VER=$(curl -sf ${CURL_RETRY} -o /dev/null -w '%{redirect_url}' "https://github.com/mhsanaei/mtg-multi/releases/latest" | sed -n 's#.*/releases/tag/##p')
+              if [ -z "${MTG_MULTI_VER}" ]; then echo "could not resolve the latest mtg-multi release tag"; exit 1; fi
+              MTG_PKG="mtg-multi-${MTG_MULTI_VER#v}-linux-${{ matrix.platform }}"
+              curl -sfLRO ${CURL_RETRY} "https://github.com/mhsanaei/mtg-multi/releases/download/${MTG_MULTI_VER}/${MTG_PKG}.tar.gz"
+              tar -xzf "${MTG_PKG}.tar.gz"
+              mv "${MTG_PKG}/mtg-multi" "mtg-linux-${{ matrix.platform }}"
+              rm -rf "${MTG_PKG}" "${MTG_PKG}.tar.gz"
+              ;;
+          esac
+          cd ../..
+
+          tar -zcvf x-ui-linux-${{ matrix.platform }}.tar.gz x-ui
+          sha256sum x-ui-linux-${{ matrix.platform }}.tar.gz > x-ui-linux-${{ matrix.platform }}.tar.gz.sha256
+
+      - name: Verify patched binary
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          if strings xui-release | grep -q 'raw.githubusercontent.com/MHSanaei/3x-ui'; then
+            echo "::error::panel updater still points at upstream"; exit 1
+          fi
+          if strings xui-release | grep -q 'api.github.com/repos/MHSanaei/3x-ui'; then
+            echo "::error::panel release API still points at upstream"; exit 1
+          fi
+          if strings xui-release | grep -q 'MHSanaei/sponsors'; then
+            echo "::error::sponsor feed reference survived the patch"; exit 1
+          fi
+          if ! strings xui-release | grep -q "raw.githubusercontent.com/${FORK_REPO}/main/update.sh"; then
+            echo "::error::panel updater does not point at ${FORK_REPO}"; exit 1
+          fi
+          if [[ "${{ matrix.platform }}" == "amd64" ]]; then
+            VERSION=$(./xui-release -v)
+            if [[ "${VERSION}" != "${{ needs.guard.outputs.version }}" ]]; then
+              echo "::error::binary version ${VERSION} != expected ${{ needs.guard.outputs.version }}"; exit 1
+            fi
+          fi
+          echo "patched binary verified for ${{ matrix.platform }}"
+
+      - name: Upload platform artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ matrix.platform }}
+          path: |
+            upstream/x-ui-linux-${{ matrix.platform }}.tar.gz
+            upstream/x-ui-linux-${{ matrix.platform }}.tar.gz.sha256
+
+  publish:
+    name: Publish release
+    needs: [guard, build]
+    if: needs.guard.outputs.proceed == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork repo
+        uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Clone upstream release source
+        run: |
+          git clone --depth 1 --branch "${{ needs.guard.outputs.tag }}" \
+            "https://github.com/${UPSTREAM_REPO}.git" upstream
+
+      - name: Generate fork-pointed scripts
+        run: |
+          python3 scripts/patch.py scripts \
+            --src upstream \
+            --dest . \
+            --fork "${FORK_REPO}"
+
+      - name: Commit synced scripts to main
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add install.sh update.sh x-ui.sh x-ui.rc x-ui.service.debian x-ui.service.arch x-ui.service.rhel
+          if git diff --cached --quiet; then
+            echo "scripts already in sync"
+          else
+            git commit -m "chore: sync fork scripts for ${{ needs.guard.outputs.tag }}"
+            git push origin HEAD:main
+          fi
+
+      - name: Replace existing release when forced
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.guard.outputs.tag }}"
+          if gh release view "${TAG}" --repo "${FORK_REPO}" >/dev/null 2>&1; then
+            gh release delete "${TAG}" --repo "${FORK_REPO}" --yes --cleanup-tag
+            echo "deleted existing release ${TAG}"
+          fi
+
+      - name: Tag and publish
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.guard.outputs.tag }}"
+          VERSION="${{ needs.guard.outputs.version }}"
+          git tag -f "${TAG}"
+          git push -f origin "refs/tags/${TAG}"
+          {
+            printf '上游 %s 的免广告自编译版本。\n\n' "${TAG}"
+            printf -- '- 已通过 baseline 校验，移除赞助商广告位与赞助商接口数据\n'
+            printf -- '- 面板更新通道与版本检查已指向 %s，一键升级不会恢复广告\n' "${FORK_REPO}"
+            printf -- '- 安装：bash <(curl -Ls https://github.com/%s/releases/latest/download/install.sh)\n' "${FORK_REPO}"
+          } > release-notes.md
+          gh release create "${TAG}" \
+            dist/x-ui-linux-*.tar.gz \
+            dist/x-ui-linux-*.tar.gz.sha256 \
+            install.sh update.sh x-ui.sh \
+            --repo "${FORK_REPO}" \
+            --title "3x-ui ${VERSION} (ad-free)" \
+            --notes-file release-notes.md \
+            --latest
+
+      - name: Verify release assets
+        run: |
+          set -euo pipefail
+          gh release view "${{ needs.guard.outputs.tag }}" --repo "${FORK_REPO}" --json assets \
+            --jq '.assets[].name'
