@@ -219,7 +219,27 @@ def apply_patch(src: Path, baseline: dict, fork: str) -> None:
     if test_file.exists():
         test_file.unlink()
 
-    # 2. Remove the visible ad mounts / navigation entry points.
+    # 2. Remove the visible ad mounts / navigation entry points. Since v3.11.0
+    #    the router, sidebar, page titles and command palette all read one
+    #    route manifest, so deleting its sponsor row removes all four at once.
+    sub_once(
+        src / "frontend/src/routes/panelRoutes.tsx",
+        r"^[ \t]*CrownOutlined,\n",
+        "",
+        "panelRoutes CrownOutlined import",
+    )
+    sub_once(
+        src / "frontend/src/routes/panelRoutes.tsx",
+        r"^const SponsorsPage = lazy\(\(\) => import\('@/pages/sponsors/SponsorsPage'\)\);\n",
+        "",
+        "panelRoutes lazy import",
+    )
+    sub_once(
+        src / "frontend/src/routes/panelRoutes.tsx",
+        r"^[ \t]*\{ path: '/sponsors',[^\n]*\n",
+        "",
+        "panelRoutes sponsors entry",
+    )
     sub_once(
         src / "frontend/src/pages/login/LoginPage.tsx",
         r"^import SponsorSlot from '@/components/sponsor/SponsorSlot';\n",
@@ -245,35 +265,22 @@ def apply_patch(src: Path, baseline: dict, fork: str) -> None:
         "IndexPage mount",
     )
     sub_once(
-        src / "frontend/src/layouts/AppSidebar.tsx",
-        r"^[ \t]*\{ key: '/sponsors',[^\n]*\n",
-        "",
-        "AppSidebar sponsors entry",
-    )
-    sub_once(
-        src / "frontend/src/routes.tsx",
-        r"^const SponsorsPage = lazy\(\(\) => import\('@/pages/sponsors/SponsorsPage'\)\);\n",
-        "",
-        "routes lazy import",
-    )
-    sub_once(
-        src / "frontend/src/routes.tsx",
-        r"^[ \t]*\{ path: 'sponsors', element: withSuspense\(<SponsorsPage />\) \},\n",
-        "",
-        "routes entry",
-    )
-    sub_once(
         src / "frontend/src/components/command-palette/CommandPalette.tsx",
-        r"\n[ \t]*\{\n[ \t]*path: '/sponsors',\n(?:[^\n]*\n)*?[ \t]*\},\n",
+        r"^[ \t]*'/sponsors':[^\n]*\n",
         "",
-        "command palette entry",
+        "command palette sponsor keywords",
     )
-    sub_once(
-        src / "frontend/src/components/command-palette/CommandPalette.tsx",
-        r"^[ \t]*CrownOutlined,\n",
-        "",
-        "command palette icon import",
-    )
+
+    # The manifest was the only remaining user of menu.sponsors; drop the now
+    # dead key from every locale so the i18n dead-key test stays green.
+    for locale in sorted((src / "internal/web/translation").glob("*.json")):
+        data = json.loads(locale.read_text(encoding="utf-8"))
+        menu = data.get("menu")
+        if isinstance(menu, dict):
+            menu.pop("sponsors", None)
+        locale.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
     # 3. Repoint the panel self-update channel and the source link at the fork.
     panel_go = src / "internal/web/service/panel/panel.go"
@@ -312,6 +319,7 @@ def apply_patch(src: Path, baseline: dict, fork: str) -> None:
             "raw.githubusercontent.com/MHSanaei/3x-ui",
             "api.github.com/repos/MHSanaei/3x-ui",
             "MHSanaei/sponsors",
+            "menu.sponsors",
         ):
             if needle in text:
                 leftovers.append(f"{rel}: {needle}")

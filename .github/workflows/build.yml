@@ -214,7 +214,7 @@ jobs:
           mkdir x-ui/bin
           cd x-ui/bin
 
-          Xray_URL="https://github.com/XTLS/Xray-core/releases/download/v26.10.10/"
+          Xray_URL="https://github.com/XTLS/Xray-core/releases/download/v26.10.21/"
           if [ "${{ matrix.platform }}" == "amd64" ]; then
             fetch ${Xray_URL}Xray-linux-64.zip; unzip -q Xray-linux-64.zip; rm -f Xray-linux-64.zip
           elif [ "${{ matrix.platform }}" == "arm64" ]; then

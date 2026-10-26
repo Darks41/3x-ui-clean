@@ -1,7 +1,7 @@
 {
   "version": 1,
   "upstream_repo": "MHSanaei/3x-ui",
-  "pinned_tag": "v3.10.2",
+  "pinned_tag": "v3.11.0",
   "ad_files": {
     "internal/web/service/panel/sponsor.go": "69a09ce2f94773a37bf2a364677e21889b028f964e273d48b28839191b6f8655",
     "frontend/src/components/sponsor/SponsorSlot.tsx": "7cac62e0f7e0e5d067f5870aa22c1da2bb5a0f34a4bb551f17cd71e8629c110d",
@@ -11,6 +11,14 @@
     "frontend/src/lib/sponsors.ts": "e3e159fc414f174cc4968a980065d4470659bbdff3d162d65e86b600a104ac9b"
   },
   "anchors": [
+    {
+      "path": "frontend/src/routes/panelRoutes.tsx",
+      "contains": [
+        "const SponsorsPage = lazy(",
+        "{ path: '/sponsors'",
+        "titleKey: 'menu.sponsors'"
+      ]
+    },
     {
       "path": "frontend/src/pages/login/LoginPage.tsx",
       "contains": [
@@ -26,23 +34,9 @@
       ]
     },
     {
-      "path": "frontend/src/layouts/AppSidebar.tsx",
-      "contains": [
-        "key: '/sponsors'",
-        "menu.sponsors"
-      ]
-    },
-    {
-      "path": "frontend/src/routes.tsx",
-      "contains": [
-        "pages/sponsors/SponsorsPage",
-        "path: 'sponsors'"
-      ]
-    },
-    {
       "path": "frontend/src/components/command-palette/CommandPalette.tsx",
       "contains": [
-        "path: '/sponsors'"
+        "'/sponsors':"
       ]
     },
     {
