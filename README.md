@@ -2,7 +2,7 @@
 
 基于 [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui) 官方源码，在 GitHub Actions 中自动打补丁并编译的免广告版本。安装、升级方式与官方版一致，但运行时不加载官方赞助商广告，且升级不会把广告带回来。
 
-当前发布：**v3.10.2（linux/amd64）**
+当前发布：**v3.11.0（linux/amd64）**
 
 > 本仓库不保存上游源代码。每次构建都按上游 release tag 拉取官方源码，先校验广告代码基线，通过后再应用补丁并编译。
 
@@ -58,7 +58,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/Darks41/3x-ui-clean/main/updat
 官方广告不是写死在页面里的，而是服务端从 `MHSanaei/sponsors` 仓库拉取 JSON 后渲染的赞助商卡片。本仓库的补丁：
 
 - `internal/web/service/panel/sponsor.go`：替换为桩实现，`GetSponsors` 返回空列表，`GetSponsorLogo` 返回未知，不再发起任何外部请求；
-- 登录页、仪表盘的 `SponsorSlot` 挂载移除；
+- 登录页、仪表盘的 `SponsorSlot` 挂载移除（v3.11.0 起入口集中在 `panelRoutes.tsx`，补丁已同步适配）；
 - 侧边栏 `赞助商` 菜单、`/sponsors` 路由、命令面板入口移除；
 - 保留 `GET /sponsors`、`GET /sponsors/logo/:name` 两个路由及 OpenAPI 类型，避免破坏 API 契约与生成代码；它们现在只返回空数据/404。
 
