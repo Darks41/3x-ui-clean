@@ -5,9 +5,9 @@
   "ad_files": {
     "internal/web/service/panel/sponsor.go": "69a09ce2f94773a37bf2a364677e21889b028f964e273d48b28839191b6f8655",
     "frontend/src/components/sponsor/SponsorSlot.tsx": "7cac62e0f7e0e5d067f5870aa22c1da2bb5a0f34a4bb551f17cd71e8629c110d",
-    "frontend/src/components/sponsor/SponsorCard.tsx": "faf6cf8017df8ad9b33079bb50d5f3c651acbaf11788fd525d5d9e77d1a15712",
+    "frontend/src/components/sponsor/SponsorCard.tsx": "5de7febbf9dd158ec621e4c8cf9e7bfa85f231922c853bcf47718813d5cb5ce1",
     "frontend/src/api/queries/useSponsorsQuery.ts": "ecace055bced670727c6584cabd9fe0fa682cd05b34234ff6a297a23af675a0b",
-    "frontend/src/pages/sponsors/SponsorsPage.tsx": "88932977cb8585ac40a7a38371f1982c19fadb491b4a94bcf85ef4cc70615c08",
+    "frontend/src/pages/sponsors/SponsorsPage.tsx": "25771a91c51ca556b2fcc9cdfc53c76f8530b954416bb94e4353a51ffff1d8ca",
     "frontend/src/lib/sponsors.ts": "e3e159fc414f174cc4968a980065d4470659bbdff3d162d65e86b600a104ac9b"
   },
   "anchors": [
