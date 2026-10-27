@@ -176,6 +176,12 @@ jobs:
           set -euo pipefail
           CURL_RETRY="--retry 5 --retry-all-errors --retry-delay 3"
           fetch() { wget -q --tries=5 --waitretry=10 --retry-on-http-error=429,500,502,503 "$@"; }
+          XRAY_VER=$(grep -oE 'Xray-core/releases/download/v[0-9]+\.[0-9]+\.[0-9]+' .github/workflows/release.yml | head -n1 | sed 's#.*/##' || true)
+          if [ -z "${XRAY_VER}" ]; then
+            echo "::error::Could not resolve the Xray version from upstream .github/workflows/release.yml" >&2
+            exit 1
+          fi
+          echo "Bundling Xray ${XRAY_VER} (resolved from upstream release workflow)"
           export CGO_ENABLED=1
           export GOOS=linux
           export GOARCH=${{ matrix.platform }}
@@ -214,7 +220,7 @@ jobs:
           mkdir x-ui/bin
           cd x-ui/bin
 
-          Xray_URL="https://github.com/XTLS/Xray-core/releases/download/v26.10.21/"
+          Xray_URL="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VER}/"
           if [ "${{ matrix.platform }}" == "amd64" ]; then
             fetch ${Xray_URL}Xray-linux-64.zip; unzip -q Xray-linux-64.zip; rm -f Xray-linux-64.zip
           elif [ "${{ matrix.platform }}" == "arm64" ]; then
@@ -320,11 +326,21 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add install.sh update.sh x-ui.sh x-ui.rc x-ui.service.debian x-ui.service.arch x-ui.service.rhel
+          TAG="${{ needs.guard.outputs.tag }}"
+          python3 - "$TAG" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          path = Path("baseline.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          data["pinned_tag"] = sys.argv[1]
+          path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          PY
+          git add install.sh update.sh x-ui.sh x-ui.rc x-ui.service.debian x-ui.service.arch x-ui.service.rhel baseline.json
           if git diff --cached --quiet; then
             echo "scripts already in sync"
           else
-            git commit -m "chore: sync fork scripts for ${{ needs.guard.outputs.tag }}"
+            git commit -m "chore: sync fork scripts and baseline for ${{ needs.guard.outputs.tag }}"
             git push origin HEAD:main
           fi
 

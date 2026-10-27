@@ -85,6 +85,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/Darks41/3x-ui-clean/main/updat
 
 构建流程（仅 amd64）：拉取上游 tag → guard 校验 → 打补丁 → 构建前端 → Bootlin musl 静态编译 Go 二进制 → 按官方目录结构打包 → 上传 release（含 `.sha256`、`install.sh`、`update.sh`、`x-ui.sh`）。
 
+Xray 版本不再写死：构建时从上游 `.github/workflows/release.yml` 解析并下载对应版本；`baseline.json` 的 `pinned_tag` 由发布任务自动更新，不需要手动跟随。
+
 目前只发布 `linux/amd64`。
 
 ## 目录
