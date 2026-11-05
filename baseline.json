@@ -3,11 +3,11 @@
   "upstream_repo": "MHSanaei/3x-ui",
   "pinned_tag": "v3.11.0",
   "ad_files": {
-    "internal/web/service/panel/sponsor.go": "69a09ce2f94773a37bf2a364677e21889b028f964e273d48b28839191b6f8655",
+    "internal/web/service/panel/sponsor.go": "06b99b841e9ff5be926290f506edd5aaf4e77a4faf7d7d282c93c6aba463b914",
     "frontend/src/components/sponsor/SponsorSlot.tsx": "7cac62e0f7e0e5d067f5870aa22c1da2bb5a0f34a4bb551f17cd71e8629c110d",
     "frontend/src/components/sponsor/SponsorCard.tsx": "5de7febbf9dd158ec621e4c8cf9e7bfa85f231922c853bcf47718813d5cb5ce1",
     "frontend/src/api/queries/useSponsorsQuery.ts": "ecace055bced670727c6584cabd9fe0fa682cd05b34234ff6a297a23af675a0b",
-    "frontend/src/pages/sponsors/SponsorsPage.tsx": "25771a91c51ca556b2fcc9cdfc53c76f8530b954416bb94e4353a51ffff1d8ca",
+    "frontend/src/pages/sponsors/SponsorsPage.tsx": "202906b75e3a5f2ca2d4e392168351edcba4196c0bbf34efb92ff36f1a11c230",
     "frontend/src/lib/sponsors.ts": "e3e159fc414f174cc4968a980065d4470659bbdff3d162d65e86b600a104ac9b"
   },
   "anchors": [
